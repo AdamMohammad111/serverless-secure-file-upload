@@ -108,4 +108,4 @@ The system follows **serverless architecture principles**, meaning:
 ✔ Fully managed AWS services  
 
 ---
-
+“The infrastructure is defined using Terraform to enable reproducible, serverless deployment via AWS CLI.”
