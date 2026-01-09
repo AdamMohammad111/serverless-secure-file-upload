@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Serverless Dashboard</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    body { background-color: #f3f4f6; font-family: 'Inter', sans-serif; }
+    .card { border: none; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); background: #ffffff; }
+    .card-header { background: transparent; border-bottom: 1px solid #e5e7eb; padding: 20px; font-weight: 600; }
+
+    /* Drag & Drop */
+    .upload-zone {
+      border: 2px dashed #d1d5db;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      transition: all 0.3s ease;
+      cursor: pointer;
+      background: #f9fafb;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: #4f46e5;
+      background: #eef2ff;
+    }
+    #fileInput {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    /* Table tweaks */
+    #historyTable { table-layout: fixed; }
+    .col-name { width: 55%; }
+    .col-date { width: 30%; }
+    .col-size { width: 15%; }
+
+    /* prevent wrapping for date + size */
+    .nowrap { white-space: nowrap; }
+    .truncate {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      display: inline-block;
+      vertical-align: bottom;
+    }
+
+    /* Sort UI */
+    .sort-pill .btn {
+      border-color: #dee2e6;
+    }
+  </style>
+</head>
+
+<body>
+  <nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container">
+      <span class="navbar-brand mb-0 h1">AWS Serverless App</span>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-light" onclick="loadHistory()">Refresh History</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container">
+    <div id="statusMessage" class="alert d-none shadow-sm border-0" role="alert"></div>
+
+    <div class="row g-4">
+
+      <!-- Upload -->
+      <div class="col-lg-5">
+        <div class="card h-100">
+          <div class="card-header">Upload Files</div>
+          <div class="card-body d-flex flex-column justify-content-center">
+
+            <form id="uploadForm">
+              <div class="upload-zone mb-3" id="dropZone">
+                <i class="bi bi-cloud-upload" style="font-size: 48px; color: #9ca3af;"></i>
+                <h5 class="mb-1 mt-2">Click or Drag file here</h5>
+                <p class="text-muted small mb-0">Supports PDF, PNG, JPG, MP4</p>
+                <input type="file" id="fileInput" required>
+              </div>
+
+              <div id="fileDetails" class="d-none mb-3 text-center">
+                <span class="badge bg-light text-dark border p-2">
+                  <i class="bi bi-file-earmark me-1"></i>
+                  <span id="fileNameDisplay">file.txt</span>
+                </span>
+              </div>
+
+              <!-- Progress -->
+              <div id="progressWrap" class="d-none mb-3">
+                <div class="d-flex justify-content-between small text-muted mb-1">
+                  <span>Upload Progress</span>
+                  <span id="progressPct">0%</span>
+                </div>
+                <div class="progress" style="height: 10px;">
+                  <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary w-100" id="uploadBtn" disabled>
+                Upload to Cloud
+              </button>
+
+              <button type="button" class="btn btn-outline-secondary w-100 mt-2 d-none" id="clearBtn">
+                Clear selected file
+              </button>
+            </form>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="col-lg-7">
+        <div class="card h-100">
+          <div class="card-header d-flex justify-content-between align-items-center gap-3 flex-wrap">
+            <div class="d-flex align-items-center gap-2">
+              <span>Audit History</span>
+              <span class="badge bg-secondary" id="logCount">Loading...</span>
+            </div>
+
+            <!-- Right controls -->
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+
+              <!-- Sort -->
+              <div class="btn-group btn-group-sm sort-pill" role="group" aria-label="Sort options">
+                <button type="button" class="btn btn-outline-secondary active" id="sortDateBtn" title="Sort by date">
+                  <i class="bi bi-clock-history me-1"></i>Date
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="sortSizeBtn" title="Sort by size">
+                  <i class="bi bi-bar-chart-line me-1"></i>Size
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="sortDirBtn" title="Toggle sort direction">
+                  <i class="bi bi-sort-down-alt me-1" id="sortDirIcon"></i>
+                  <span id="sortDirLabel">Desc</span>
+                </button>
+              </div>
+
+              <!-- Search -->
+              <div style="min-width: 240px;">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text"><i class="bi bi-search"></i></span>
+                  <input
+                    type="text"
+                    id="searchInput"
+                    class="form-control"
+                    placeholder="Search filename..."
+                    autocomplete="off"
+                  />
+                  <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn" title="Clear search">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div class="card-body p-0">
+            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+              <table class="table table-hover align-middle mb-0" id="historyTable">
+                <thead class="bg-light sticky-top">
+                  <tr>
+                    <th class="ps-4 col-name">File Name</th>
+                    <th class="col-date">Date</th>
+                    <th class="col-size">Size</th>
+                  </tr>
+                </thead>
+                <tbody id="historyBody">
+                  <tr>
+                    <td colspan="3" class="text-center py-4 text-muted">
+                      Connecting to Database...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="px-4 py-2 small text-muted border-top">
+              Tip: After upload, audit logs may take a couple seconds to appear.
+              <span class="ms-2">Last updated: <span id="lastUpdated">-</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ✅ Your API endpoints
+    const UPLOAD_API  = "https://du9qibd34b.execute-api.eu-north-1.amazonaws.com/prod/get-link";
+    const HISTORY_API = "https://du9qibd34b.execute-api.eu-north-1.amazonaws.com/prod/list";
+
+    // DOM
+    const form = document.getElementById('uploadForm');
+    const fileInput = document.getElementById('fileInput');
+    const statusMsg = document.getElementById('statusMessage');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const dropZone = document.getElementById('dropZone');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const fileDetails = document.getElementById('fileDetails');
+
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar  = document.getElementById('progressBar');
+    const progressPct  = document.getElementById('progressPct');
+
+    const clearBtn = document.getElementById('clearBtn');
+
+    const searchInput = document.getElementById('searchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+    const lastUpdated = document.getElementById('lastUpdated');
+
+    const sortDateBtn = document.getElementById('sortDateBtn');
+    const sortSizeBtn = document.getElementById('sortSizeBtn');
+    const sortDirBtn  = document.getElementById('sortDirBtn');
+    const sortDirIcon = document.getElementById('sortDirIcon');
+    const sortDirLabel= document.getElementById('sortDirLabel');
+
+    // Data
+    let allItems = [];
+
+    // Sort state
+    let sortKey = "date";     // "date" | "size"
+    let sortDir = "desc";     // "asc" | "desc"
+
+    // Drag hover effects
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      });
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+      });
+    });
+
+    // File selected
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) {
+        fileNameDisplay.textContent = fileInput.files[0].name;
+        fileDetails.classList.remove('d-none');
+        uploadBtn.disabled = false;
+        clearBtn.classList.remove('d-none');
+      }
+    });
+
+    // Clear selected file
+    clearBtn.addEventListener('click', () => {
+      fileInput.value = "";
+      fileDetails.classList.add('d-none');
+      uploadBtn.disabled = true;
+      clearBtn.classList.add('d-none');
+      resetProgress();
+      hideMessage();
+    });
+
+    function resetProgress() {
+      progressWrap.classList.add('d-none');
+      progressBar.style.width = "0%";
+      progressPct.textContent = "0%";
+    }
+
+    function showProgress() {
+      progressWrap.classList.remove('d-none');
+      progressBar.style.width = "0%";
+      progressPct.textContent = "0%";
+    }
+
+    // Upload (Generate link -> XHR upload with progress)
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      uploadBtn.disabled = true;
+      uploadBtn.innerText = "Requesting link...";
+      showMessage("info", "Requesting secure upload link...");
+      resetProgress();
+
+      try {
+        const lambdaResponse = await fetch(
+          `${UPLOAD_API}?filename=${encodeURIComponent(file.name)}&fileType=${encodeURIComponent(file.type || 'application/octet-stream')}`
+        );
+
+        if (!lambdaResponse.ok) throw new Error("Failed to connect to Upload API.");
+
+        const data = await lambdaResponse.json();
+
+        // support proxy-ish bodies
+        let uploadUrl = data.upload_url;
+        if (!uploadUrl && data.body) {
+          const body = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
+          uploadUrl = body.upload_url;
+        }
+        if (!uploadUrl) throw new Error("Upload URL missing from response.");
+
+        uploadBtn.innerText = "Uploading...";
+        showMessage("info", "Uploading to S3...");
+        showProgress();
+
+        await uploadWithProgress(uploadUrl, file);
+
+        showMessage("success", "Upload Successful! Updating history...");
+        uploadBtn.innerText = "Upload to Cloud";
+        resetProgress();
+
+        // Reset selection
+        fileInput.value = "";
+        fileDetails.classList.add('d-none');
+        clearBtn.classList.add('d-none');
+
+        // Refresh history after a short delay (S3->DDB pipeline)
+        setTimeout(loadHistory, 2000);
+
+      } catch (err) {
+        console.error(err);
+        showMessage("danger", "Error: " + err.message);
+        uploadBtn.innerText = "Upload to Cloud";
+        uploadBtn.disabled = false;
+        resetProgress();
+      } finally {
+        if (fileInput.files[0]) uploadBtn.disabled = false;
+      }
+    });
+
+    function uploadWithProgress(url, file) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", url, true);
+
+        // NOTE: Your working curl upload succeeded without Content-Type.
+        // Avoid setting headers here to prevent SignatureDoesNotMatch.
+        // If you later sign ContentType in the presign, then set it.
+
+        xhr.upload.onprogress = (evt) => {
+          if (!evt.lengthComputable) return;
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          progressBar.style.width = pct + "%";
+          progressPct.textContent = pct + "%";
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`S3 upload failed (HTTP ${xhr.status})`));
+        };
+
+        xhr.onerror = () => reject(new Error("Network error during upload."));
+        xhr.send(file);
+      });
+    }
+
+    // Search filtering
+    searchInput.addEventListener('input', () => {
+      applyAndRender();
+    });
+
+    clearSearchBtn.addEventListener('click', () => {
+      searchInput.value = "";
+      applyAndRender();
+      searchInput.focus();
+    });
+
+    function filterItems(items, query) {
+      const q = (query || "").trim().toLowerCase();
+      if (!q) return items;
+      return items.filter(it => (it.filename || "").toLowerCase().includes(q));
+    }
+
+    // Sort controls
+    sortDateBtn.addEventListener('click', () => {
+      sortKey = "date";
+      sortDateBtn.classList.add('active');
+      sortSizeBtn.classList.remove('active');
+      applyAndRender();
+    });
+
+    sortSizeBtn.addEventListener('click', () => {
+      sortKey = "size";
+      sortSizeBtn.classList.add('active');
+      sortDateBtn.classList.remove('active');
+      applyAndRender();
+    });
+
+    sortDirBtn.addEventListener('click', () => {
+      sortDir = (sortDir === "desc") ? "asc" : "desc";
+      updateSortDirUI();
+      applyAndRender();
+    });
+
+    function updateSortDirUI() {
+      if (sortDir === "desc") {
+        sortDirIcon.className = "bi bi-sort-down-alt me-1";
+        sortDirLabel.textContent = "Desc";
+      } else {
+        sortDirIcon.className = "bi bi-sort-up me-1";
+        sortDirLabel.textContent = "Asc";
+      }
+    }
+
+    function sortItems(items) {
+      const dirMul = (sortDir === "asc") ? 1 : -1;
+
+      return [...items].sort((a, b) => {
+        if (sortKey === "size") {
+          const as = Number.isFinite(a._sizeBytes) ? a._sizeBytes : -1;
+          const bs = Number.isFinite(b._sizeBytes) ? b._sizeBytes : -1;
+          return (as - bs) * dirMul;
+        } else {
+          const at = Number.isFinite(a._timeMs) ? a._timeMs : 0;
+          const bt = Number.isFinite(b._timeMs) ? b._timeMs : 0;
+          return (at - bt) * dirMul;
+        }
+      });
+    }
+
+    function applyAndRender() {
+      const filtered = filterItems(allItems, searchInput.value);
+      const sorted = sortItems(filtered);
+      renderHistory(sorted);
+    }
+
+    // History
+    async function loadHistory() {
+      const tbody = document.getElementById('historyBody');
+      tbody.innerHTML = `<tr><td colspan="3" class="text-center py-4 text-muted">Loading history...</td></tr>`;
+
+      try {
+        const response = await fetch(HISTORY_API);
+        if (!response.ok) throw new Error("Failed to fetch logs.");
+
+        const data = await response.json();
+
+        let items = data;
+        if (data.body) items = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
+        if (!Array.isArray(items) && items.Items) items = items.Items;
+        if (!Array.isArray(items)) items = [];
+
+        allItems = items.map(normalizeItem);
+
+        document.getElementById('logCount').innerText = `${allItems.length} Files`;
+        lastUpdated.textContent = new Date().toLocaleString();
+
+        applyAndRender();
+
+      } catch (error) {
+        console.error("History Error:", error);
+        document.getElementById('logCount').innerText = `Error`;
+        document.getElementById('historyBody').innerHTML =
+          `<tr><td colspan="3" class="text-center text-danger">Error loading history. Check console.</td></tr>`;
+      }
+    }
+
+    function normalizeItem(item) {
+      // Your API returns: filename, file_size_bytes, upload_time
+      const filename = item.filename || item.file_name || "Unknown";
+      const sizeBytesRaw = item.file_size_bytes ?? item.file_size ?? item.size ?? null;
+      const uploadTimeRaw = item.upload_time || item.timestamp || item.date || null;
+
+      const sizeBytes = (typeof sizeBytesRaw === "string") ? Number(sizeBytesRaw) : sizeBytesRaw;
+      const timeMs = uploadTimeRaw ? Date.parse(uploadTimeRaw) : null;
+
+      return {
+        ...item,
+        filename,
+        _sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
+        _timeMs: Number.isFinite(timeMs) ? timeMs : null
+      };
+    }
+
+    function formatSize(bytes) {
+      if (!Number.isFinite(bytes)) return "-";
+      if (bytes < 1024) return `${bytes} B`;
+      const kb = bytes / 1024;
+      if (kb < 1024) return `${kb.toFixed(1)} KB`;
+      const mb = kb / 1024;
+      return `${mb.toFixed(1)} MB`;
+    }
+
+    function formatDate(ms) {
+      if (!Number.isFinite(ms)) return "-";
+      return new Date(ms).toLocaleString();
+    }
+
+    function renderHistory(items) {
+      const tbody = document.getElementById('historyBody');
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-muted py-4">No matching files.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(item => `
+        <tr>
+          <td class="ps-4 fw-bold">
+            <span class="truncate" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
+          </td>
+          <td class="nowrap">${escapeHtml(formatDate(item._timeMs))}</td>
+          <td class="nowrap">${escapeHtml(formatSize(item._sizeBytes))}</td>
+        </tr>
+      `).join('');
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function showMessage(type, text) {
+      statusMsg.className = `alert alert-${type} shadow-sm border-0`;
+      statusMsg.innerText = text;
+      statusMsg.classList.remove('d-none');
+    }
+
+    function hideMessage() {
+      statusMsg.classList.add('d-none');
+    }
+
+    // Initial load
+    document.addEventListener('DOMContentLoaded', () => {
+      updateSortDirUI();  // ensure icon/label are correct
+      loadHistory();
+    });
+  </script>
+</body>
+</html>
